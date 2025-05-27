@@ -1,0 +1,9 @@
+package org.pascallexer;
+
+public enum TokenType {
+    BEGIN, END, IF, THEN, ELSE, WHILE, DO, VAR, PROCEDURE, FUNCTION,
+    IDENT, NUMBER, STRING,
+    PLUS, MINUS, MUL, DIV, ASSIGN, EQ, LT, GT, LE, GE, NE,
+    LPAREN, RPAREN, SEMICOLON, COLON, COMMA, DOT,
+    EOF, ERROR
+}
