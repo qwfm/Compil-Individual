@@ -5,14 +5,21 @@ import java.util.*;
 public class Lexer {
     private final String input;
     private int pos = 0, line = 1, column = 1;
-    private final Map<String, TokenType> keywords = Map.ofEntries(
-            Map.entry("BEGIN", TokenType.BEGIN),
-            Map.entry("END",   TokenType.END),
-            Map.entry("IF",    TokenType.IF),
-            // … інші ключові слова
-            Map.entry("VAR",   TokenType.VAR)
-    );
-    private final List<Token> symbolTable = new ArrayList<>();
+    private final SymbolTable symbols = new SymbolTable();
+    private static final Map<String, TokenType> keywords = new HashMap<>();
+
+    static {
+        String[] keys = {
+                "and","array","begin","case","const","div","do","downto",
+                "else","end","file","for","function","goto","if","in",
+                "label","mod","nil","not","of","or","packed","procedure",
+                "program","record","repeat","set","then","to","type","until",
+                "var","while","with"
+        };
+        for (String k : keys) {
+            keywords.put(k, TokenType.valueOf(k.toUpperCase()));
+        }
+    }
 
     public Lexer(String input) {
         this.input = input;
@@ -24,154 +31,170 @@ public class Lexer {
         do {
             tok = nextToken();
             tokens.add(tok);
+            symbols.add(tok);
         } while (tok.type != TokenType.EOF);
         return tokens;
     }
 
+    public Collection<Token> getSymbolTable() {
+        return symbols.values();
+    }
+
     private Token nextToken() {
         skipWhitespaceAndComments();
-        if (pos >= input.length()) {
-            return new Token(TokenType.EOF, "", line, column);
+        if (isAtEnd()) {
+            return makeToken(TokenType.EOF, "");
         }
-        char ch = peek();
-        // Буквені (DFA для ідентифікаторів/ключових слів)
-        if (Character.isLetter(ch)) {
-            return identifierOrKeyword();
-        }
-        // Цифри (DFA для чисел)
-        if (Character.isDigit(ch)) {
-            return number();
-        }
-        // Рядок у апострофах
-        if (ch == '\'') {
-            return stringLiteral();
-        }
-        // Оператори й роздільники
-        switch (ch) {
-            case '+': return simpleToken(TokenType.PLUS, "+");
-            case '-': return simpleToken(TokenType.MINUS, "-");
-            case '*': return simpleToken(TokenType.MUL, "*");
-            case '/': return simpleToken(TokenType.DIV, "/");
-            case '(' : return simpleToken(TokenType.LPAREN, "(");
-            case ')' : return simpleToken(TokenType.RPAREN, ")");
-            case ';' : return simpleToken(TokenType.SEMICOLON, ";");
-            case ',' : return simpleToken(TokenType.COMMA, ",");
-            case ':' :
-                if (peekNext() == '=') return compositeToken(TokenType.ASSIGN, ":=");
-                else return simpleToken(TokenType.COLON, ":");
-            case '.' : return simpleToken(TokenType.DOT, ".");
+        char c = peek();
+        if (isAlpha(c)) return identifierOrKeyword();
+        if (Character.isDigit(c)) return number();
+        switch (c) {
+            case '\'': return stringLiteral();
+            case '+': return simple("+", TokenType.PLUS);
+            case '-': return simple("-", TokenType.MINUS);
+            case '*': return simple("*", TokenType.MUL);
+            case '/': return simple("/", TokenType.DIV_OP);
+            case '=': return simple("=", TokenType.EQ);
             case '<':
-                if (peekNext() == '=') return compositeToken(TokenType.LE, "<=");
-                else if (peekNext() == '>') return compositeToken(TokenType.NE, "<>");
-                else return simpleToken(TokenType.LT, "<");
+                if (match('=')) return simple("<=", TokenType.LE);
+                if (match('>')) return simple("<>", TokenType.NE);
+                return simple("<", TokenType.LT);
             case '>':
-                if (peekNext() == '=') return compositeToken(TokenType.GE, ">=");
-                else return simpleToken(TokenType.GT, ">");
-            default:
-                // Невідомий символ – лексична помилка
-                return errorToken("Unexpected character: '" + ch + "'");
+                if (match('=')) return simple(">=", TokenType.GE);
+                return simple(">", TokenType.GT);
+            case '(':
+                if (match('*')) return commentMultiline();
+                return simple("(", TokenType.LParen);
+            case ')': return simple(")", TokenType.RParen);
+            case '[': return simple("[", TokenType.LBracket);
+            case ']': return simple("]", TokenType.RBracket);
+            case '{': return commentBrace();
+            case '}':
+                ErrorHandler.error(line, column, "Unexpected '}'");
+                advance();
+                return makeToken(TokenType.ERROR, "}");
+            case ',': return simple(",", TokenType.COMMA);
+            case ';': return simple(";", TokenType.SEMICOLON);
+            case ':': return match('=') ? simple(":=", TokenType.ASSIGN)
+                    : simple(":", TokenType.COLON);
+            case '.': return match('.') ? simple("..", TokenType.DOTDOT)
+                    : simple(".", TokenType.DOT);
         }
+        // Якщо не співпадає
+        ErrorHandler.error(line, column, "Unknown character: '" + c + "'");
+        advance();
+        return makeToken(TokenType.ERROR, String.valueOf(c));
     }
 
-    // Приклад DFA для ідентифікаторів і ключових слів
     private Token identifierOrKeyword() {
-        int startLine = line, startCol = column;
-        StringBuilder sb = new StringBuilder();
-        while (pos < input.length() &&
-                (Character.isLetterOrDigit(peek()) || peek() == '_')) {
-            sb.append(nextChar());
-        }
-        String lexeme = sb.toString().toUpperCase();
-        TokenType type = keywords.getOrDefault(lexeme, TokenType.IDENT);
-        Token tok = new Token(type, lexeme, startLine, startCol);
-        if (type == TokenType.IDENT) {
-            symbolTable.add(tok);
-        }
-        return tok;
+        int startCol = column;
+        while (isAlphaNumeric(peek())) advance();
+        String lex = input.substring(pos - (column - startCol), pos);
+        TokenType type = keywords.getOrDefault(lex.toLowerCase(), TokenType.IDENT);
+        return makeToken(type, lex);
     }
 
-    // DFA для чисел (цілі та дійсні)
     private Token number() {
-        int startLine = line, startCol = column;
-        StringBuilder sb = new StringBuilder();
-        while (pos < input.length() && Character.isDigit(peek())) {
-            sb.append(nextChar());
+        int startCol = column;
+        while (Character.isDigit(peek())) advance();
+        boolean isReal = false;
+        if (peek() == '.' && Character.isDigit(peekNext())) {
+            isReal = true;
+            advance();
+            while (Character.isDigit(peek())) advance();
         }
-        if (peek() == '.') {
-            sb.append(nextChar());
-            while (pos < input.length() && Character.isDigit(peek())) {
-                sb.append(nextChar());
-            }
-        }
-        String lexeme = sb.toString();
-        Token tok = new Token(TokenType.NUMBER, lexeme, startLine, startCol);
-        symbolTable.add(tok);
-        return tok;
-    }
-
-    // DFA для рядкових літералів
-    private Token stringLiteral() {
-        int startLine = line, startCol = column;
-        nextChar(); // відкидаємо початковий '
-        StringBuilder sb = new StringBuilder();
-        while (pos < input.length() && peek() != '\'') {
-            sb.append(nextChar());
-        }
-        if (peek() == '\'') {
-            nextChar(); // кінець літералу
-            Token tok = new Token(TokenType.STRING, sb.toString(), startLine, startCol);
-            symbolTable.add(tok);
-            return tok;
+        String lex = input.substring(pos - (column - startCol), pos);
+        if (isReal) {
+            double val = Double.parseDouble(lex);
+            return makeToken(TokenType.REAL_LITERAL, lex, val);
         } else {
-            return errorToken("Unterminated string literal");
+            int val = Integer.parseInt(lex);
+            return makeToken(TokenType.INTEGER_LITERAL, lex, val);
         }
     }
 
-    // Допоміжні методи
+    private Token stringLiteral() {
+        int startCol = column;
+        advance();
+        while (!isAtEnd() && peek() != '\'') {
+            if (peek() == '\n') line++;
+            advance();
+        }
+        if (isAtEnd()) {
+            ErrorHandler.error(line, column, "Unterminated string literal");
+            return makeToken(TokenType.ERROR, "");
+        }
+        advance();
+        String lex = input.substring(pos - (column - startCol), pos);
+        String val = lex.substring(1, lex.length() - 1);
+        TokenType ttype = (val.length() == 1) ? TokenType.CHAR_LITERAL : TokenType.STRING_LITERAL;
+        return new Token(ttype, lex, val, line, startCol);
+    }
+
+    private Token commentBrace() {
+        advance();
+        while (!isAtEnd() && peek() != '}') {
+            if (peek() == '\n') line++;
+            advance();
+        }
+        if (peek() == '}') advance();
+        return nextToken();
+    }
+
+    private Token commentMultiline() {
+        while (!isAtEnd() && !(peek() == '*' && peekNext() == ')')) {
+            if (peek() == '\n') line++;
+            advance();
+        }
+        if (peek() == '*' && peekNext() == ')') {
+            advance(); advance();
+        } else {
+            ErrorHandler.error(line, column, "Unterminated comment");
+        }
+        return nextToken();
+    }
+
     private void skipWhitespaceAndComments() {
-        while (pos < input.length()) {
-            char ch = peek();
-            // Пробіли/табуляції/переноси рядка
-            if (Character.isWhitespace(ch)) {
-                nextChar();
-                continue;
+        while (!isAtEnd()) {
+            char c = peek();
+            if (c == ' ' || c == '\r' || c == '\t' || c == '\n') {
+                if (c == '\n') line++;
+                advance();
+            } else if (c == '/' && peekNext() == '/') {
+                // single-line comment
+                while (!isAtEnd() && peek() != '\n') advance();
+            } else {
+                break;
             }
-            // Коментарі { … }
-            if (ch == '{') {
-                nextChar();
-                while (pos < input.length() && peek() != '}') {
-                    nextChar();
-                }
-                if (peek() == '}') nextChar();
-                continue;
-            }
-            break;
         }
     }
-    private Token simpleToken(TokenType type, String lexeme) {
-        int l = line, c = column;
-        for (int i = 0; i < lexeme.length(); i++) nextChar();
-        return new Token(type, lexeme, l, c);
+
+    private boolean isAtEnd() {
+        return pos >= input.length();
     }
-    private Token compositeToken(TokenType type, String lexeme) {
-        return simpleToken(type, lexeme);
+    private char peek() { return isAtEnd() ? '\0' : input.charAt(pos); }
+    private char peekNext() { return (pos+1 >= input.length()) ? '\0' : input.charAt(pos+1); }
+    private char advance() {
+        char c = peek(); pos++;
+        if (c == '\n') column = 1; else column++;
+        return c;
     }
-    private Token errorToken(String msg) {
-        Token tok = new Token(TokenType.ERROR, msg, line, column);
-        pos++; column++;
-        return tok;
+    private boolean match(char expected) {
+        if (isAtEnd() || peek() != expected) return false;
+        advance(); return true;
     }
-    private char peek() {
-        return input.charAt(pos);
+    private boolean isAlpha(char c) { return Character.isLetter(c); }
+    private boolean isAlphaNumeric(char c) { return Character.isLetterOrDigit(c); }
+
+    private Token simple(String lex, TokenType type) {
+        int startCol = column;
+        for (char ch : lex.toCharArray()) advance();
+        return new Token(type, lex, null, line, startCol);
     }
-    private char peekNext() {
-        return pos+1 < input.length() ? input.charAt(pos+1) : '\0';
+    private Token makeToken(TokenType type, String lex) {
+        return new Token(type, lex, null, line, column - lex.length());
     }
-    private char nextChar() {
-        char ch = input.charAt(pos++);
-        if (ch == '\n') { line++; column = 1; }
-        else column++;
-        return ch;
+    private Token makeToken(TokenType type, String lex, Object lit) {
+        return new Token(type, lex, lit, line, column - lex.length());
     }
 }
-

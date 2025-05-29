@@ -2,23 +2,25 @@ package org.pascallexer;
 
 import java.util.List;
 
+import java.nio.file.*;
+import java.io.IOException;
+
 public class TestLexer {
     public static void main(String[] args) {
-        String input =
-                "VAR x, y: INTEGER;\n" +
-                        "BEGIN\n" +
-                        "  x := 10;\n" +
-                        "  y := x + 20;\n" +
-                        "  writeln('Result = ', y);\n" +
-                        "END.";
+        if (args.length == 0) {
+            System.err.println("Usage: java TestLexer <source-file>");
+            System.exit(1);
+        }
+        try {
+            String content = Files.readString(Path.of(args[0]));
+            Lexer lexer = new Lexer(content);
+            List<Token> tokens = lexer.tokenize();
+            tokens.forEach(System.out::println);
 
-        Lexer lexer = new Lexer(input);
-        List<Token> tokens = lexer.tokenize();
-
-        System.out.println("=== Tokens ===");
-        for (Token token : tokens) {
-            System.out.println(token);
+            System.out.println("\n--- Symbol Table ---");
+            lexer.getSymbolTable().forEach(System.out::println);
+        } catch (IOException e) {
+            System.err.println("Error reading file: " + e.getMessage());
         }
     }
 }
-
