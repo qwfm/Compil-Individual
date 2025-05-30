@@ -93,8 +93,9 @@ L1:
     // Comments
     { This is a Pascal-style comment }
     // This is a C++-style comment
-    (* This is a
-    Delphi-style comment *)
+    (*
+    This is a Delphi-style comment
+     *)
 
     // End-of-program
 end.                              // DOT

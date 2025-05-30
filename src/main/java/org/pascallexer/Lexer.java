@@ -13,6 +13,7 @@ public class Lexer {
     private int column = 0;
 
     private static final Map<String, TokenType> keywords = new HashMap<>();
+
     static {
         for (TokenType tt : TokenType.values()) {
             if (tt.name().chars().allMatch(Character::isLetter)) {
@@ -38,27 +39,71 @@ public class Lexer {
 
     public Token nextToken() throws IOException {
         while (currentChar != -1 && Character.isWhitespace(currentChar)) {
-            if (currentChar == '\n') { line++; column = 0; }
+            if (currentChar == '\n') {
+                line++;
+                column = 0;
+            }
             advance();
         }
         if (currentChar == -1) {
             return new Token(TokenType.EOF, "", null, line, column);
         }
 
+        // Single-line comments //
         if (currentChar == '/') {
             reader.mark(2);
             advance();
             if (currentChar == '/') {
-                // skip until end of line
-                while (currentChar != -1 && currentChar != '\n') {
-                    advance();
+                while (currentChar != -1 && currentChar != '\n') advance();
+                return nextToken();
+            } else {
+                reader.reset();
+                column--;
+                currentChar = '/';
+            }
+        }
+
+        // Brace comments { ... }
+        if (currentChar == '{') {
+            advance();
+            while (currentChar != -1 && currentChar != '}') {
+                if (currentChar == '\n') {
+                    line++;
+                    column = 0;
+                }
+                advance();
+            }
+            if (currentChar == '}') advance();
+            return nextToken();
+        }
+
+        // Delphi comments (* ... *)
+        if (currentChar == '(') {
+            reader.mark(2);
+            advance();
+            if (currentChar == '*') {
+                // skip comment
+                advance();
+                while (currentChar != -1) {
+                    if (currentChar == '*') {
+                        advance();
+                        if (currentChar == ')') {
+                            advance();
+                            break;
+                        }
+                    } else {
+                        if (currentChar == '\n') {
+                            line++;
+                            column = 0;
+                        }
+                        advance();
+                    }
                 }
                 return nextToken();
             } else {
-                // not a comment, reset
                 reader.reset();
-                currentChar = '/';
                 column--;
+                currentChar = '(';
             }
         }
 
@@ -87,7 +132,6 @@ public class Lexer {
                 advance();
                 if (currentChar == '.') {
                     // range operator
-                    sb.setLength(sb.length());
                     return new Token(TokenType.INTEGER_LITERAL, sb.toString(), Integer.parseInt(sb.toString()), line, startCol);
                 }
                 isReal = true;
@@ -104,10 +148,10 @@ public class Lexer {
             }
         }
 
-        // String or char literals (Pascal uses single quotes)
+        // String literals
         if (currentChar == '\'') {
             StringBuilder sb = new StringBuilder();
-            advance(); // skip '\''
+            advance();
             while (currentChar != -1 && currentChar != '\'') {
                 sb.append((char) currentChar);
                 advance();
@@ -116,47 +160,76 @@ public class Lexer {
                 ErrorHandler.error(line, column, "Unterminated string literal");
                 return new Token(TokenType.ERROR, sb.toString(), null, line, startCol);
             }
-            advance(); // skip closing '\''
+            advance();
             return new Token(TokenType.STRING_LITERAL, sb.toString(), sb.toString(), line, startCol);
         }
 
         // Operators and punctuation
         switch (currentChar) {
-            case '+': advance(); return new Token(TokenType.PLUS, "+", null, line, startCol);
-            case '-': advance(); return new Token(TokenType.MINUS, "-", null, line, startCol);
-            case '*': advance(); return new Token(TokenType.MUL, "*", null, line, startCol);
-            case '/': advance(); return new Token(TokenType.DIV_OP, "/", null, line, startCol);
-            case '(': advance(); return new Token(TokenType.LParen, "(", null, line, startCol);
-            case ')': advance(); return new Token(TokenType.RParen, ")", null, line, startCol);
-            case '[': advance(); return new Token(TokenType.LBracket, "[", null, line, startCol);
-            case ']': advance(); return new Token(TokenType.RBracket, "]", null, line, startCol);
-            case '{':
+            case '+':
                 advance();
-                while (currentChar != -1 && currentChar != '}') {
-                    if (currentChar == '\n') { line++; column = 0; }
-                    advance();
-                }
-                if (currentChar == '}') advance();
-                return nextToken();
-            case ';': advance(); return new Token(TokenType.SEMICOLON, ";", null, line, startCol);
+                return new Token(TokenType.PLUS, "+", null, line, startCol);
+            case '-':
+                advance();
+                return new Token(TokenType.MINUS, "-", null, line, startCol);
+            case '*':
+                advance();
+                return new Token(TokenType.MUL, "*", null, line, startCol);
+            case '/':
+                advance();
+                return new Token(TokenType.DIV_OP, "/", null, line, startCol);
+            case '(':
+                advance();
+                return new Token(TokenType.LParen, "(", null, line, startCol);
+            case ')':
+                advance();
+                return new Token(TokenType.RParen, ")", null, line, startCol);
+            case '[':
+                advance();
+                return new Token(TokenType.LBracket, "[", null, line, startCol);
+            case ']':
+                advance();
+                return new Token(TokenType.RBracket, "]", null, line, startCol);
+            case ';':
+                advance();
+                return new Token(TokenType.SEMICOLON, ";", null, line, startCol);
             case ':':
                 advance();
-                if (currentChar == '=') { advance(); return new Token(TokenType.ASSIGN, ":=", null, line, startCol); }
+                if (currentChar == '=') {
+                    advance();
+                    return new Token(TokenType.ASSIGN, ":=", null, line, startCol);
+                }
                 return new Token(TokenType.COLON, ":", null, line, startCol);
             case '<':
                 advance();
-                if (currentChar == '=') { advance(); return new Token(TokenType.LE, "<=", null, line, startCol); }
-                if (currentChar == '>') { advance(); return new Token(TokenType.NE, "<>", null, line, startCol); }
+                if (currentChar == '=') {
+                    advance();
+                    return new Token(TokenType.LE, "<=", null, line, startCol);
+                }
+                if (currentChar == '>') {
+                    advance();
+                    return new Token(TokenType.NE, "<>", null, line, startCol);
+                }
                 return new Token(TokenType.LT, "<", null, line, startCol);
             case '>':
                 advance();
-                if (currentChar == '=') { advance(); return new Token(TokenType.GE, ">=", null, line, startCol); }
+                if (currentChar == '=') {
+                    advance();
+                    return new Token(TokenType.GE, ">=", null, line, startCol);
+                }
                 return new Token(TokenType.GT, ">", null, line, startCol);
-            case '=': advance(); return new Token(TokenType.EQ, "=", null, line, startCol);
-            case ',': advance(); return new Token(TokenType.COMMA, ",", null, line, startCol);
+            case '=':
+                advance();
+                return new Token(TokenType.EQ, "=", null, line, startCol);
+            case ',':
+                advance();
+                return new Token(TokenType.COMMA, ",", null, line, startCol);
             case '.':
                 advance();
-                if (currentChar == '.') { advance(); return new Token(TokenType.DOTDOT, "..", null, line, startCol); }
+                if (currentChar == '.') {
+                    advance();
+                    return new Token(TokenType.DOTDOT, "..", null, line, startCol);
+                }
                 return new Token(TokenType.DOT, ".", null, line, startCol);
             default:
                 char bad = (char) currentChar;
