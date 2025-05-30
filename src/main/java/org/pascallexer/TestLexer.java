@@ -1,26 +1,24 @@
 package org.pascallexer;
 
-import java.util.List;
-
-import java.nio.file.*;
+import java.io.FileReader;
 import java.io.IOException;
+import java.io.Reader;
 
 public class TestLexer {
     public static void main(String[] args) {
-        if (args.length == 0) {
-            System.err.println("Usage: java TestLexer <source-file>");
+        if (args.length != 1) {
+            System.err.println("Usage: java org.pascallexer.TestLexer <source-file>");
             System.exit(1);
         }
-        try {
-            String content = Files.readString(Path.of(args[0]));
-            Lexer lexer = new Lexer(content);
-            List<Token> tokens = lexer.tokenize();
-            tokens.forEach(System.out::println);
-
-            System.out.println("\n--- Symbol Table ---");
-            lexer.getSymbolTable().forEach(System.out::println);
+        String filename = args[0];
+        try (Reader reader = new FileReader(filename)) {
+            Lexer lexer = new Lexer(reader);
+            Token token;
+            while ((token = lexer.nextToken()).type != TokenType.EOF) {
+                System.out.println(token);
+            }
         } catch (IOException e) {
-            System.err.println("Error reading file: " + e.getMessage());
+            System.err.println("IO Error: " + e.getMessage());
         }
     }
 }

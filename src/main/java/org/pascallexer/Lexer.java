@@ -1,200 +1,168 @@
 package org.pascallexer;
 
-import java.util.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.Reader;
+import java.util.HashMap;
+import java.util.Map;
 
 public class Lexer {
-    private final String input;
-    private int pos = 0, line = 1, column = 1;
-    private final SymbolTable symbols = new SymbolTable();
+    private final BufferedReader reader;
+    private int currentChar;
+    private int line = 1;
+    private int column = 0;
+
     private static final Map<String, TokenType> keywords = new HashMap<>();
-
     static {
-        String[] keys = {
-                "and","array","begin","case","const","div","do","downto",
-                "else","end","file","for","function","goto","if","in",
-                "label","mod","nil","not","of","or","packed","procedure",
-                "program","record","repeat","set","then","to","type","until",
-                "var","while","with"
-        };
-        for (String k : keys) {
-            keywords.put(k, TokenType.valueOf(k.toUpperCase()));
-        }
-    }
-
-    public Lexer(String input) {
-        this.input = input;
-    }
-
-    public List<Token> tokenize() {
-        List<Token> tokens = new ArrayList<>();
-        Token tok;
-        do {
-            tok = nextToken();
-            tokens.add(tok);
-            symbols.add(tok);
-        } while (tok.type != TokenType.EOF);
-        return tokens;
-    }
-
-    public Collection<Token> getSymbolTable() {
-        return symbols.values();
-    }
-
-    private Token nextToken() {
-        skipWhitespaceAndComments();
-        if (isAtEnd()) {
-            return makeToken(TokenType.EOF, "");
-        }
-        char c = peek();
-        if (isAlpha(c)) return identifierOrKeyword();
-        if (Character.isDigit(c)) return number();
-        switch (c) {
-            case '\'': return stringLiteral();
-            case '+': return simple("+", TokenType.PLUS);
-            case '-': return simple("-", TokenType.MINUS);
-            case '*': return simple("*", TokenType.MUL);
-            case '/': return simple("/", TokenType.DIV_OP);
-            case '=': return simple("=", TokenType.EQ);
-            case '<':
-                if (match('=')) return simple("<=", TokenType.LE);
-                if (match('>')) return simple("<>", TokenType.NE);
-                return simple("<", TokenType.LT);
-            case '>':
-                if (match('=')) return simple(">=", TokenType.GE);
-                return simple(">", TokenType.GT);
-            case '(':
-                if (match('*')) return commentMultiline();
-                return simple("(", TokenType.LParen);
-            case ')': return simple(")", TokenType.RParen);
-            case '[': return simple("[", TokenType.LBracket);
-            case ']': return simple("]", TokenType.RBracket);
-            case '{': return commentBrace();
-            case '}':
-                ErrorHandler.error(line, column, "Unexpected '}'");
-                advance();
-                return makeToken(TokenType.ERROR, "}");
-            case ',': return simple(",", TokenType.COMMA);
-            case ';': return simple(";", TokenType.SEMICOLON);
-            case ':': return match('=') ? simple(":=", TokenType.ASSIGN)
-                    : simple(":", TokenType.COLON);
-            case '.': return match('.') ? simple("..", TokenType.DOTDOT)
-                    : simple(".", TokenType.DOT);
-        }
-        // Якщо не співпадає
-        ErrorHandler.error(line, column, "Unknown character: '" + c + "'");
-        advance();
-        return makeToken(TokenType.ERROR, String.valueOf(c));
-    }
-
-    private Token identifierOrKeyword() {
-        int startCol = column;
-        while (isAlphaNumeric(peek())) advance();
-        String lex = input.substring(pos - (column - startCol), pos);
-        TokenType type = keywords.getOrDefault(lex.toLowerCase(), TokenType.IDENT);
-        return makeToken(type, lex);
-    }
-
-    private Token number() {
-        int startCol = column;
-        while (Character.isDigit(peek())) advance();
-        boolean isReal = false;
-        if (peek() == '.' && Character.isDigit(peekNext())) {
-            isReal = true;
-            advance();
-            while (Character.isDigit(peek())) advance();
-        }
-        String lex = input.substring(pos - (column - startCol), pos);
-        if (isReal) {
-            double val = Double.parseDouble(lex);
-            return makeToken(TokenType.REAL_LITERAL, lex, val);
-        } else {
-            int val = Integer.parseInt(lex);
-            return makeToken(TokenType.INTEGER_LITERAL, lex, val);
-        }
-    }
-
-    private Token stringLiteral() {
-        int startCol = column;
-        advance();
-        while (!isAtEnd() && peek() != '\'') {
-            if (peek() == '\n') line++;
-            advance();
-        }
-        if (isAtEnd()) {
-            ErrorHandler.error(line, column, "Unterminated string literal");
-            return makeToken(TokenType.ERROR, "");
-        }
-        advance();
-        String lex = input.substring(pos - (column - startCol), pos);
-        String val = lex.substring(1, lex.length() - 1);
-        TokenType ttype = (val.length() == 1) ? TokenType.CHAR_LITERAL : TokenType.STRING_LITERAL;
-        return new Token(ttype, lex, val, line, startCol);
-    }
-
-    private Token commentBrace() {
-        advance();
-        while (!isAtEnd() && peek() != '}') {
-            if (peek() == '\n') line++;
-            advance();
-        }
-        if (peek() == '}') advance();
-        return nextToken();
-    }
-
-    private Token commentMultiline() {
-        while (!isAtEnd() && !(peek() == '*' && peekNext() == ')')) {
-            if (peek() == '\n') line++;
-            advance();
-        }
-        if (peek() == '*' && peekNext() == ')') {
-            advance(); advance();
-        } else {
-            ErrorHandler.error(line, column, "Unterminated comment");
-        }
-        return nextToken();
-    }
-
-    private void skipWhitespaceAndComments() {
-        while (!isAtEnd()) {
-            char c = peek();
-            if (c == ' ' || c == '\r' || c == '\t' || c == '\n') {
-                if (c == '\n') line++;
-                advance();
-            } else if (c == '/' && peekNext() == '/') {
-                // single-line comment
-                while (!isAtEnd() && peek() != '\n') advance();
-            } else {
-                break;
+        for (TokenType tt : TokenType.values()) {
+            if (tt.name().chars().allMatch(Character::isLetter)) {
+                keywords.put(tt.name(), tt);
             }
         }
     }
 
-    private boolean isAtEnd() {
-        return pos >= input.length();
+    public Lexer(Reader reader) throws IOException {
+        if (reader instanceof BufferedReader) {
+            this.reader = (BufferedReader) reader;
+        } else {
+            this.reader = new BufferedReader(reader);
+        }
+        this.reader.mark(1);
+        advance();
     }
-    private char peek() { return isAtEnd() ? '\0' : input.charAt(pos); }
-    private char peekNext() { return (pos+1 >= input.length()) ? '\0' : input.charAt(pos+1); }
-    private char advance() {
-        char c = peek(); pos++;
-        if (c == '\n') column = 1; else column++;
-        return c;
-    }
-    private boolean match(char expected) {
-        if (isAtEnd() || peek() != expected) return false;
-        advance(); return true;
-    }
-    private boolean isAlpha(char c) { return Character.isLetter(c); }
-    private boolean isAlphaNumeric(char c) { return Character.isLetterOrDigit(c); }
 
-    private Token simple(String lex, TokenType type) {
+    private void advance() throws IOException {
+        currentChar = reader.read();
+        column++;
+    }
+
+    public Token nextToken() throws IOException {
+        while (currentChar != -1 && Character.isWhitespace(currentChar)) {
+            if (currentChar == '\n') { line++; column = 0; }
+            advance();
+        }
+        if (currentChar == -1) {
+            return new Token(TokenType.EOF, "", null, line, column);
+        }
+
+        if (currentChar == '/') {
+            reader.mark(2);
+            advance();
+            if (currentChar == '/') {
+                // skip until end of line
+                while (currentChar != -1 && currentChar != '\n') {
+                    advance();
+                }
+                return nextToken();
+            } else {
+                // not a comment, reset
+                reader.reset();
+                currentChar = '/';
+                column--;
+            }
+        }
+
         int startCol = column;
-        for (char ch : lex.toCharArray()) advance();
-        return new Token(type, lex, null, line, startCol);
-    }
-    private Token makeToken(TokenType type, String lex) {
-        return new Token(type, lex, null, line, column - lex.length());
-    }
-    private Token makeToken(TokenType type, String lex, Object lit) {
-        return new Token(type, lex, lit, line, column - lex.length());
+        // Identifiers and keywords
+        if (Character.isLetter(currentChar) || currentChar == '_') {
+            StringBuilder sb = new StringBuilder();
+            while (currentChar != -1 && (Character.isLetterOrDigit(currentChar) || currentChar == '_')) {
+                sb.append((char) currentChar);
+                advance();
+            }
+            String text = sb.toString().toUpperCase();
+            TokenType type = keywords.getOrDefault(text, TokenType.IDENT);
+            return new Token(type, text, text, line, startCol);
+        }
+
+        // Numbers
+        if (Character.isDigit(currentChar)) {
+            StringBuilder sb = new StringBuilder();
+            boolean isReal = false;
+            while (currentChar != -1 && Character.isDigit(currentChar)) {
+                sb.append((char) currentChar);
+                advance();
+            }
+            if (currentChar == '.') {
+                advance();
+                if (currentChar == '.') {
+                    // range operator
+                    sb.setLength(sb.length());
+                    return new Token(TokenType.INTEGER_LITERAL, sb.toString(), Integer.parseInt(sb.toString()), line, startCol);
+                }
+                isReal = true;
+                sb.append('.');
+                while (currentChar != -1 && Character.isDigit(currentChar)) {
+                    sb.append((char) currentChar);
+                    advance();
+                }
+            }
+            if (isReal) {
+                return new Token(TokenType.REAL_LITERAL, sb.toString(), Double.parseDouble(sb.toString()), line, startCol);
+            } else {
+                return new Token(TokenType.INTEGER_LITERAL, sb.toString(), Integer.parseInt(sb.toString()), line, startCol);
+            }
+        }
+
+        // String or char literals (Pascal uses single quotes)
+        if (currentChar == '\'') {
+            StringBuilder sb = new StringBuilder();
+            advance(); // skip '\''
+            while (currentChar != -1 && currentChar != '\'') {
+                sb.append((char) currentChar);
+                advance();
+            }
+            if (currentChar != '\'') {
+                ErrorHandler.error(line, column, "Unterminated string literal");
+                return new Token(TokenType.ERROR, sb.toString(), null, line, startCol);
+            }
+            advance(); // skip closing '\''
+            return new Token(TokenType.STRING_LITERAL, sb.toString(), sb.toString(), line, startCol);
+        }
+
+        // Operators and punctuation
+        switch (currentChar) {
+            case '+': advance(); return new Token(TokenType.PLUS, "+", null, line, startCol);
+            case '-': advance(); return new Token(TokenType.MINUS, "-", null, line, startCol);
+            case '*': advance(); return new Token(TokenType.MUL, "*", null, line, startCol);
+            case '/': advance(); return new Token(TokenType.DIV_OP, "/", null, line, startCol);
+            case '(': advance(); return new Token(TokenType.LParen, "(", null, line, startCol);
+            case ')': advance(); return new Token(TokenType.RParen, ")", null, line, startCol);
+            case '[': advance(); return new Token(TokenType.LBracket, "[", null, line, startCol);
+            case ']': advance(); return new Token(TokenType.RBracket, "]", null, line, startCol);
+            case '{':
+                advance();
+                while (currentChar != -1 && currentChar != '}') {
+                    if (currentChar == '\n') { line++; column = 0; }
+                    advance();
+                }
+                if (currentChar == '}') advance();
+                return nextToken();
+            case ';': advance(); return new Token(TokenType.SEMICOLON, ";", null, line, startCol);
+            case ':':
+                advance();
+                if (currentChar == '=') { advance(); return new Token(TokenType.ASSIGN, ":=", null, line, startCol); }
+                return new Token(TokenType.COLON, ":", null, line, startCol);
+            case '<':
+                advance();
+                if (currentChar == '=') { advance(); return new Token(TokenType.LE, "<=", null, line, startCol); }
+                if (currentChar == '>') { advance(); return new Token(TokenType.NE, "<>", null, line, startCol); }
+                return new Token(TokenType.LT, "<", null, line, startCol);
+            case '>':
+                advance();
+                if (currentChar == '=') { advance(); return new Token(TokenType.GE, ">=", null, line, startCol); }
+                return new Token(TokenType.GT, ">", null, line, startCol);
+            case '=': advance(); return new Token(TokenType.EQ, "=", null, line, startCol);
+            case ',': advance(); return new Token(TokenType.COMMA, ",", null, line, startCol);
+            case '.':
+                advance();
+                if (currentChar == '.') { advance(); return new Token(TokenType.DOTDOT, "..", null, line, startCol); }
+                return new Token(TokenType.DOT, ".", null, line, startCol);
+            default:
+                char bad = (char) currentChar;
+                ErrorHandler.error(line, column, "Unexpected character '" + bad + "'");
+                advance();
+                return new Token(TokenType.ERROR, String.valueOf(bad), null, line, startCol);
+        }
     }
 }
